@@ -4,6 +4,31 @@
  */
 import { config, PLANS, type Plan } from './config.ts';
 
+/**
+ * 抜粋の中で一致した箇所を <mark> で囲む。
+ *
+ * 必ず「原文を分割 → 各片をエスケープ → mark を挟む」順で組む。
+ * エスケープ済みの文字列に対して検索語を探すと、実体参照（&amp; など）を
+ * またいでタグを挿入してしまい、HTML を壊す／XSS になる。
+ */
+export function highlight(text: string, query: string | undefined): string {
+  const q = (query ?? '').trim();
+  if (!q) return esc(text);
+  const hay = text.toLowerCase();
+  const needle = q.toLowerCase();
+  let out = '';
+  let i = 0;
+  for (;;) {
+    const at = hay.indexOf(needle, i);
+    if (at < 0) {
+      out += esc(text.slice(i));
+      return out;
+    }
+    out += esc(text.slice(i, at)) + `<mark>${esc(text.slice(at, at + q.length))}</mark>`;
+    i = at + q.length;
+  }
+}
+
 export function esc(s: unknown): string {
   return String(s ?? '')
     .replace(/&/g, '&amp;')
@@ -54,6 +79,14 @@ code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:13px}
 .plan li{margin:5px 0;font-size:14px}
 .ev{border-left:3px solid var(--accent);padding:2px 0 2px 14px;margin:16px 0}
 .ev .meta{font-size:12px;color:var(--muted);margin-top:5px}
+mark{background:#fde68a;color:#1a1a1a;padding:0 2px;border-radius:2px;font-weight:600}
+@media(prefers-color-scheme:dark){mark{background:#8a6d1f;color:#fff3d0}}
+@media(max-width:600px){
+  .wrap{padding:16px 14px 56px}
+  h1{font-size:23px}
+  table{display:block;overflow-x:auto;white-space:nowrap;-webkit-overflow-scrolling:touch}
+  .ev{padding-left:10px}
+}
 footer{border-top:1px solid var(--line);margin-top:56px;padding:20px;font-size:13px;color:var(--muted);text-align:center}
 footer a{color:var(--muted);margin:0 8px}
 `;
@@ -106,7 +139,7 @@ export function landing(): string {
 <h2>できないことを先に書きます</h2>
 <div class="warn">
 <p style="margin-top:0"><strong>自動同期はしません。</strong> Notion や Chatwork との連携は未実装です。
-現在の取り込み方法は Markdown・テキストの貼り付けとファイル取り込みだけです。</p>
+現在の取り込み方法は、Markdown・テキストの貼り付けだけです。</p>
 <p><strong>「常に最新」を約束しません。</strong> 表示するのは利用者が取り込んだ時点の時刻です。
 鮮度が重要な情報は元の資料で確認してください。</p>
 <p style="margin-bottom:0"><strong>AIが勝手に覚えることはありません。</strong> 保存は利用者が確認したときだけ行われます。</p>
@@ -281,7 +314,7 @@ ${
       : opts.results
           .map(
             (r) => `<div class="ev">
-        <div>${esc(r.excerpt)}</div>
+        <div>${highlight(r.excerpt, opts.query)}</div>
         <div class="meta">出典: ${esc(r.title)}
           ${r.source_url ? ` ／ <a href="${esc(r.source_url)}">${esc(r.source_url)}</a>` : ''}
           ／ 由来: ${esc(r.provenance === 'user_saved' ? 'ユーザー保存' : '取り込み原文')}
@@ -323,7 +356,8 @@ ${
 
 <h2>この Pack を持ち出す</h2>
 <p><a class="btn sec" href="/app/packs/${esc(pack.id)}/export">Markdownで出力</a>
-   <span class="small muted">MCP非対応のAIには、この出力を貼り付けて使えます。</span></p>`;
+   <span class="small muted">MCP非対応のAIには、この出力を貼り付けて使えます。</span></p>
+<p class="small muted">Claude や Cursor から直接引きたい場合は <a href="/app/connect">接続方法</a> を参照してください。</p>`;
 }
 
 export function connectPage(tokenPrefix: string | null): string {

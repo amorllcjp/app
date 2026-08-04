@@ -182,12 +182,26 @@ export function iso(v: Date | string | null | undefined): string | null {
  */
 function makeSnippet(text: string, query: string): string {
   const span = SEARCH_LIMITS.snippetChars;
-  let at = text.toLowerCase().indexOf(query.toLowerCase());
-  if (at < 0) at = normalize(text).indexOf(normalize(query));
-  if (at < 0) at = 0;
-  const start = Math.max(0, Math.min(at - Math.floor(span / 3), Math.max(0, text.length - span)));
-  const end = Math.min(text.length, start + span);
+  if (text.length <= span) return text;
+
+  const at = matchIndex(text, query);
+  // 一致箇所を窓の中央に置く。前だけ長く見せても、読み手は目的の記述に辿り着けない。
+  const ideal = at - Math.floor((span - query.length) / 2);
+  const start = Math.max(0, Math.min(ideal, text.length - span));
+  const end = start + span;
   return `${start > 0 ? '…' : ''}${text.slice(start, end)}${end < text.length ? '…' : ''}`;
+}
+
+/**
+ * 原文中の一致位置。原文で直接探すことを優先する。
+ * NFKC 正規化は文字数を変えることがあり（半角濁点カナなど）、
+ * 正規化後の位置を原文に当てるとずれるため。
+ */
+export function matchIndex(text: string, query: string): number {
+  const direct = text.toLowerCase().indexOf(query.toLowerCase());
+  if (direct >= 0) return direct;
+  const viaNorm = normalize(text).indexOf(normalize(query));
+  return viaNorm >= 0 && normalize(text).length === text.length ? viaNorm : 0;
 }
 
 /**

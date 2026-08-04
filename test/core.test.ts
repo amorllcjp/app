@@ -280,3 +280,33 @@ describe('パスワード', () => {
     await assert.rejects(() => createAccount(d, 'a@example.com', 'password-cccc'));
   });
 });
+
+describe('抜粋とハイライト（操作性）', () => {
+  test('長文でも一致箇所が抜粋の中央付近に来る', async () => {
+    const { d, a } = await setup();
+    const pack = await createPack(d, a.workspaceId, a.userId, { name: 'A案件' });
+    const filler = 'これは無関係な定型文です。担当と日程を調整しました。';
+    // 一致箇所を本文の後半に置く
+    const body = filler.repeat(20) + '本件の単価は8万円で合意した。' + filler.repeat(20);
+    await addDocument(d, a.workspaceId, a.userId, pack.id, { title: '長い議事録', body });
+    const r = (await searchWithEvidence(d, a.workspaceId, a.userId, { query: '単価' })).results[0]!;
+    const at = r.excerpt.indexOf('単価');
+    assert.ok(at >= 0, '抜粋に検索語が含まれていない');
+    const ratio = at / r.excerpt.length;
+    // 端に寄っていないこと。中央付近（25〜75%）に入っていれば読み手が見つけられる
+    assert.ok(ratio > 0.25 && ratio < 0.75, `一致箇所が端に寄っている: ${Math.round(ratio * 100)}%`);
+  });
+
+  test('ハイライトはHTMLをエスケープしてから挿入する', async () => {
+    const { highlight } = await import('../src/views.ts');
+    assert.equal(highlight('単価は8万円', '単価'), '<mark>単価</mark>は8万円');
+    // 検索語がタグでも、実行可能なHTMLにしない
+    const out = highlight('a<script>alert(1)</script>b', '<script>');
+    assert.ok(!out.includes('<script>'), 'エスケープされていない');
+    assert.ok(out.includes('<mark>&lt;script&gt;</mark>'));
+    // 実体参照をまたいでタグを挿入しない
+    assert.equal(highlight('A&B', 'a&b'), '<mark>A&amp;B</mark>');
+    // 検索語なしでもエスケープはする
+    assert.equal(highlight('<b>x</b>', undefined), '&lt;b&gt;x&lt;/b&gt;');
+  });
+});
