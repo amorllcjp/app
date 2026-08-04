@@ -251,6 +251,12 @@ export interface SearchOutcome {
   limit: number;
   /** 上限に達している場合、課金導線のメッセージを入れる。 */
   limitReached: boolean;
+  /**
+   * 検索対象に入っている資料の件数。
+   * 0件の場合、「検索語が悪い」のではなく「そもそも資料が無い」。
+   * この2つを取り違えると、利用者は検索語を変え続けて詰まる。
+   */
+  documentsInScope: number;
 }
 
 export async function searchWithEvidence(
@@ -262,7 +268,7 @@ export async function searchWithEvidence(
   const plan = await workspacePlan(db, workspaceId);
   const used = await searchesUsed(db, workspaceId);
   if (used >= plan.limits.searchesPerMonth) {
-    return { results: [], used, limit: plan.limits.searchesPerMonth, limitReached: true };
+    return { results: [], used, limit: plan.limits.searchesPerMonth, limitReached: true, documentsInScope: 0 };
   }
 
   // packIds が指定された場合も、必ず自ワークスペースのものに絞り直す。
@@ -275,7 +281,13 @@ export async function searchWithEvidence(
     packIds = rows.map((p) => p.id);
     if (packIds.length === 0) {
       await bumpSearches(db, workspaceId);
-      return { results: [], used: used + 1, limit: plan.limits.searchesPerMonth, limitReached: false };
+      return {
+        results: [],
+        used: used + 1,
+        limit: plan.limits.searchesPerMonth,
+        limitReached: false,
+        documentsInScope: 0,
+      };
     }
   }
 
@@ -283,7 +295,29 @@ export async function searchWithEvidence(
   await bumpSearches(db, workspaceId);
   await audit(db, workspaceId, actor, 'search', null, { hits: hits.length, queryChars: opts.query.length });
 
-  return { results: hits.map(toEvidence), used: used + 1, limit: plan.limits.searchesPerMonth, limitReached: false };
+  // 0件のときだけ、資料そのものが無いのかを調べる。ヒットしていれば数える意味がない。
+  let documentsInScope = hits.length;
+  if (hits.length === 0) {
+    const params: unknown[] = [workspaceId];
+    let filter = '';
+    if (packIds && packIds.length) {
+      filter = ' and pack_id = any($2)';
+      params.push(packIds);
+    }
+    const { rows } = await db.query<{ n: string }>(
+      `select count(*)::text as n from documents where workspace_id = $1 and deleted_at is null${filter}`,
+      params,
+    );
+    documentsInScope = Number(rows[0]?.n ?? 0);
+  }
+
+  return {
+    results: hits.map(toEvidence),
+    used: used + 1,
+    limit: plan.limits.searchesPerMonth,
+    limitReached: false,
+    documentsInScope,
+  };
 }
 
 function toEvidence(h: SearchHit): Evidence {
@@ -436,7 +470,10 @@ export async function packStatus(db: Sql, workspaceId: string, packId?: string) 
       oldest_fetched_at: stat.oldest,
       // 自動同期は実装していない。鮮度について誤解を与えないよう明示する（要件書 F-14）。
       sync: 'manual_import_only',
-      note: '自動同期は行っていません。表示している時刻は利用者が取り込んだ時点のものです。',
+      note:
+        Number(stat.docs) === 0
+          ? 'この Pack にはまだ資料が1件も入っていません。資料を追加するまで検索は必ず0件になります。'
+          : '自動同期は行っていません。表示している時刻は利用者が取り込んだ時点のものです。',
     });
   }
   return {

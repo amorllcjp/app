@@ -62,16 +62,31 @@ export function buildMcpServer(db: Sql, workspaceId: string): McpServer {
         const { rows } = await db.query<{ plan: string }>('select plan from workspaces where id = $1', [workspaceId]);
         return text(upgradeNotice(planOf(rows[0]?.plan).label, `検索回数（${outcome.limit}回/月）`));
       }
+      /*
+       * 0件には2種類あり、利用者への案内がまったく違う。
+       *   - 資料が1件も入っていない → 検索語を変えても永久に0件。取り込みへ誘導する
+       *   - 資料はあるが一致しない   → 検索語を変えるか、記載が無いと伝える
+       * ここを一緒くたにすると、利用者は検索語を変え続けて詰まる。実際に詰まった。
+       */
+      let hint: string | undefined;
+      if (outcome.results.length === 0) {
+        hint =
+          outcome.documentsInScope === 0
+            ? `この Pack にはまだ資料が1件も入っていません。検索語の問題ではありません。` +
+              `${config.baseUrl}/app で Pack を開き、「資料を追加する」から議事録やメモを貼り付けてください。` +
+              `資料を入れるまで、検索は必ず0件になります。`
+            : '一致する記載はありません。取り込んだ資料の中にその記述が無いということです。推測で補わないでください。';
+      }
+
       return json({
         query,
         result_count: outcome.results.length,
+        documents_in_scope: outcome.documentsInScope,
         searches_used_this_month: outcome.used,
         searches_limit_this_month: outcome.limit,
         untrusted_data_notice: UNTRUSTED_NOTE,
         results: outcome.results,
-        ...(outcome.results.length === 0
-          ? { hint: '一致する記載はありません。Packに該当資料が無い可能性があります。推測で補わないでください。' }
-          : {}),
+        ...(hint ? { hint } : {}),
       });
     },
   );

@@ -310,3 +310,29 @@ describe('抜粋とハイライト（操作性）', () => {
     assert.equal(highlight('<b>x</b>', undefined), '&lt;b&gt;x&lt;/b&gt;');
   });
 });
+
+describe('資料が0件のときの案内', () => {
+  test('資料0件と「一致しない」を区別する', async () => {
+    const { d, a } = await setup();
+    const pack = await createPack(d, a.workspaceId, a.userId, { name: '空のPack' });
+
+    // 資料が1件も無い状態
+    const empty = await searchWithEvidence(d, a.workspaceId, a.userId, { query: '単価' });
+    assert.equal(empty.results.length, 0);
+    assert.equal(empty.documentsInScope, 0, '資料0件が伝わっていない');
+
+    // 資料はあるが一致しない状態
+    await addDocument(d, a.workspaceId, a.userId, pack.id, { title: 'メモ', body: '納期は10月末。' });
+    const noMatch = await searchWithEvidence(d, a.workspaceId, a.userId, { query: '単価' });
+    assert.equal(noMatch.results.length, 0);
+    assert.ok(noMatch.documentsInScope > 0, '資料があることが伝わっていない');
+  });
+
+  test('pack_status が資料0件のPackに案内を出す', async () => {
+    const { d, a } = await setup();
+    await createPack(d, a.workspaceId, a.userId, { name: '空のPack' });
+    const s = await packStatus(d, a.workspaceId);
+    assert.equal(s.packs[0]!.documents, 0);
+    assert.ok(s.packs[0]!.note.includes('資料が1件も入っていません'));
+  });
+});

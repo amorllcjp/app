@@ -230,7 +230,7 @@ ${
            (p) => `<tr>
         <td><a href="/app/packs/${esc(p.id)}">${esc(p.name)}</a>${p.status !== 'active' ? ' <span class="small muted">(無効)</span>' : ''}</td>
         <td class="small muted">${esc(p.project ?? '—')}</td>
-        <td>${p.docs}</td>
+        <td>${p.docs === 0 ? '<strong style="color:var(--warn)">0 ⚠</strong>' : p.docs}</td>
         <td class="small muted">${esc(p.updated_at.slice(0, 10))}</td>
         <td><a class="btn sec sm" href="/app/packs/${esc(p.id)}/export">出力</a></td>
       </tr>`,
@@ -301,6 +301,13 @@ export function packPage(opts: {
 ${opts.error ? `<div class="err">${esc(opts.error)}</div>` : ''}
 ${opts.notice ? `<div class="ok">${esc(opts.notice)}</div>` : ''}
 
+${
+  docs.length === 0
+    ? `<div class="warn"><p style="margin-top:0"><strong>この Pack にはまだ資料が入っていません。</strong></p>
+       <p style="margin-bottom:0">下の「資料を追加する」から、決定事項や議事メモを貼り付けてください。
+       資料を入れるまで、画面からもAIからも検索結果は0件のままです。</p></div>`
+    : ''
+}
 <h2>検索して確かめる</h2>
 <form method="get" class="card">
   <label for="q">検索語</label>
