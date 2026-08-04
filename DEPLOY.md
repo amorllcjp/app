@@ -154,7 +154,7 @@ stripe listen --forward-to localhost:8787/billing/webhook
 - [ ] `DATABASE_URL` が **pooled**（`-pooler` 付き）である
 - [ ] `SESSION_SECRET` が本番用の値である（開発用を使い回さない）
 - [ ] `BASE_URL` が本番の https URL である
-- [ ] `/healthz` が `{"ok":true}` を返す（DB接続の確認になる）
+- [ ] `/healthz` が `{"ok":true,"migrated":true}` を返す
 - [ ] `/legal/tokushoho` に「未設定」の赤字が残っていない
 - [ ] Stripeのテストモードで課金と解約を一巡した
 - [ ] Vercel の関数リージョンが Neon と同じ（現在: シンガポール）
@@ -164,6 +164,32 @@ stripe listen --forward-to localhost:8787/billing/webhook
 
 最後の2項目は雛形のままでは公開できない。要件書 §10.2 のとおり、
 確認していないことを書かないこと。
+
+## 6.5 デプロイ後に落ちたときの切り分け
+
+まず `/healthz` を開く。設定の状態が JSON で返る（接続文字列そのものは表示しない）。
+
+```json
+{"ok":false,"error":"...","env":{"database_url_set":false,"database_url_pooled":false,
+ "session_secret_set":true,"base_url":"https://...","billing_configured":false}}
+```
+
+| 症状 | 原因 | 対処 |
+|---|---|---|
+| `database_url_set: false` | 環境変数が対象の環境に設定されていない | Vercel の Production / Preview それぞれに設定して再デプロイ |
+| `database_url_pooled: false` | 直結の接続文字列を使っている | `-pooler` 入りに差し替える |
+| `migrated: false` | テーブルが無い | `npm run migrate` を本番の `DATABASE_URL` で実行 |
+| `error` に接続エラー | Neon が停止中／文字列が誤り | Neon の画面で状態と文字列を確認 |
+
+`DATABASE_URL` を設定し忘れたまま本番へ出しても、PGlite（開発用の WASM Postgres）へは
+**フォールバックしない**。サーバーレス関数の中で WASM の Postgres を起動すると落ちるうえ、
+起動できてもリクエストごとに消えるため、意図的に明示的なエラーで止めている。
+
+Vercel のログを直接見る場合:
+
+```bash
+vercel logs <デプロイURL>
+```
 
 ## 7. 運用
 

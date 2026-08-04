@@ -15,9 +15,31 @@ export interface Sql {
 
 let instance: Sql | null = null;
 
+/** Vercel / 本番など、PGlite にフォールバックしてはいけない環境か。 */
+export function isManagedRuntime(): boolean {
+  return Boolean(process.env.VERCEL) || process.env.NODE_ENV === 'production';
+}
+
 export async function sql(): Promise<Sql> {
   if (instance) return instance;
-  instance = config.databaseUrl ? await neonPool(config.databaseUrl) : await pglite(config.pgliteDir);
+  if (config.databaseUrl) {
+    instance = await neonPool(config.databaseUrl);
+    return instance;
+  }
+  /*
+   * PGlite はローカル開発とテストのためのもの。サーバーレス関数の中で WASM の
+   * Postgres を起動しようとすると落ちるうえ、仮に起動できてもリクエストごとに
+   * 消えるため、本番で黙ってフォールバックしてはいけない。
+   * 原因が読めないクラッシュになる代わりに、ここで明示的に落とす。
+   */
+  if (isManagedRuntime()) {
+    throw new Error(
+      'DATABASE_URL が設定されていません。' +
+        'Vercel のプロジェクト設定で、対象の環境（Production / Preview）に ' +
+        'Neon の pooled 接続文字列を設定し、再デプロイしてください。',
+    );
+  }
+  instance = await pglite(config.pgliteDir);
   return instance;
 }
 

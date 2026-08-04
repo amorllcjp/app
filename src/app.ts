@@ -38,6 +38,26 @@ import * as V from './views.ts';
 const COOKIE = 'cb_session';
 export const app = new Hono();
 
+/*
+ * 設定不足でハンドラが例外を投げると、Vercel では FUNCTION_INVOCATION_FAILED の
+ * 白い画面になり、原因が一切分からない。ここで受け止めて、何をすればよいか出す。
+ */
+app.onError((err, c) => {
+  console.error('unhandled error:', err.stack ?? err.message);
+  const detail = err.message.includes('DATABASE_URL') || err.message.includes('SESSION_SECRET');
+  return c.html(
+    V.layout({
+      title: '設定が未完了です',
+      account: null,
+      body: `<h1>サーバー設定が未完了です</h1>
+        ${detail ? `<div class="err">${V.esc(err.message)}</div>` : '<div class="err">処理中にエラーが発生しました。</div>'}
+        <p class="small muted">切り分けには <a href="/healthz">/healthz</a> を確認してください。
+        設定項目の一覧が返ります（接続文字列そのものは表示しません）。</p>`,
+    }),
+    500,
+  );
+});
+
 async function account(c: Context): Promise<Account | null> {
   return readSession(await sql(), getCookie(c, COOKIE));
 }
@@ -88,12 +108,26 @@ app.get('/pricing', async (c) => {
   return html(c, V.pricing(acc?.plan, c.req.query('canceled') === '1'), acc, '料金');
 });
 
+/**
+ * 死活確認。デプロイ直後の切り分けに使うので、失敗時に「何が足りないか」まで返す。
+ * 接続文字列そのものは絶対に出さない。
+ */
 app.get('/healthz', async (c) => {
+  const env = {
+    database_url_set: Boolean(config.databaseUrl),
+    database_url_pooled: config.databaseUrl.includes('-pooler'),
+    session_secret_set: Boolean(config.sessionSecret),
+    base_url: config.baseUrl,
+    billing_configured: billingConfigured(),
+  };
   try {
-    await (await sql()).query('select 1');
-    return c.json({ ok: true, at: nowIso() });
+    const { rows } = await (await sql()).query<{ n: string }>(
+      "select count(*)::text as n from information_schema.tables where table_name = 'packs'",
+    );
+    const migrated = Number(rows[0]?.n ?? 0) > 0;
+    return c.json({ ok: migrated, migrated, env, at: nowIso() }, migrated ? 200 : 503);
   } catch (e) {
-    return c.json({ ok: false, error: (e as Error).message }, 503);
+    return c.json({ ok: false, error: (e as Error).message, env, at: nowIso() }, 503);
   }
 });
 
