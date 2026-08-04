@@ -1,10 +1,14 @@
 /**
  * ルーティング。実行環境に依存しない Hono アプリ。
  *
- * ローカルは src/server.ts（@hono/node-server）、Vercel は api/index.ts（hono/vercel）から使う。
- * MCP SDK v2 のハンドラが Web標準の Request/Response なので、変換層が要らない。
+ * ローカルは src/server.ts、Vercel は api/index.ts から使う。
+ * どちらも @hono/node-server の getRequestListener を通す。
+ *
+ * このファイル自体も default export を持つ（末尾を参照）。Vercel が
+ * api/index.ts ではなくこのファイルを直接エントリポイントとして読み込む場合があるため。
  */
 import { Hono, type Context } from 'hono';
+import { getRequestListener } from '@hono/node-server';
 import { getCookie, setCookie, deleteCookie } from 'hono/cookie';
 import { sql, audit, nowIso, type Sql } from './db.ts';
 import { config } from './config.ts';
@@ -382,3 +386,17 @@ app.post('/billing/portal', async (c) => {
     return html(c, await renderDashboard(db, acc, { error: (e as Error).message }), acc, 'ダッシュボード', 400);
   }
 });
+
+/**
+ * default export。
+ *
+ * Vercel はこのファイルを（api/index.ts 経由ではなく）直接エントリポイントとして
+ * 読み込むことがあり、その場合 default export が無いと
+ * "Invalid export found in module /var/task/src/app.js" で落ちる。
+ * 実際に本番のログでこれが起きた。
+ *
+ * どちらのファイルが呼ばれても同じ挙動になるよう、ここにも Node 形式の
+ * リクエストリスナーを置く。app 自体は名前付きで export したままなので、
+ * src/server.ts（ローカル起動）からの利用は変わらない。
+ */
+export default getRequestListener(app.fetch);

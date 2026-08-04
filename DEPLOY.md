@@ -206,6 +206,15 @@ stripe listen --forward-to localhost:8787/billing/webhook
 
 `/api/ping` は環境変数の有無とリージョンも返す（値そのものは返さない）。
 
+### 「Invalid export found in module ...」が出る場合
+
+Vercel が `src/app.ts`（コンパイル後は `/var/task/src/app.js`）を関数の
+エントリポイントとして読み込んだときに出る。名前付き export しか無いと弾かれる。
+
+対策として `src/app.ts` にも default export（Node のリクエストリスナー）を置いてある。
+**`src/app.ts` の末尾の default export を消さないこと。**
+`api/index.ts` と `src/app.ts` のどちらが呼ばれても同じ挙動になるようにしてある。
+
 ### ログを直接見る
 
 ```bash
