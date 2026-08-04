@@ -426,6 +426,46 @@ app.get('/app/connect/notion/callback', async (c) => {
   }
 });
 
+/*
+ * 内部インテグレーションのトークンを直接貼る経路。
+ *
+ * OAuth（公開インテグレーション）はプライバシーポリシーや審査が必要で、
+ * 自分ひとりで試すには重すぎる。内部インテグレーションなら Notion 側で
+ * 「ページに接続を追加」した分だけが読めるので、選択の意味論は OAuth と同じ。
+ */
+app.post('/app/connect/notion/token', async (c) => {
+  const acc = (await account(c))!;
+  const db = await sql();
+  const f = await c.req.parseBody();
+  const token = String(f.token ?? '').trim();
+  const packId = String(f.pack_id ?? '');
+
+  if (!token) {
+    return html(c, await renderDashboard(db, acc, { error: 'トークンを入力してください。' }), acc, 'ダッシュボード', 400);
+  }
+  try {
+    // 貼られた値が本当に使えるか、保存する前に Notion へ問い合わせて確かめる
+    await notion.listPages(token);
+    const connId = await saveConnection(db, acc.workspaceId, acc.userId, {
+      provider: 'notion',
+      token,
+      workspaceName: '内部インテグレーション',
+    });
+    const r = await syncNotion(db, acc.workspaceId, acc.userId, { connectionId: connId, packId });
+    const msg =
+      r.added === 0
+        ? 'Notion に接続しましたが、取り込めるページがありませんでした。' +
+          'Notion 側で対象ページを開き、「接続」からこのインテグレーションを追加してください。'
+        : `Notion に接続しました。${r.added}件を取り込みました。`;
+    return html(c, await renderDashboard(db, acc, r.added === 0 ? { error: msg } : { notice: msg }), acc, 'ダッシュボード');
+  } catch (e) {
+    const m = e instanceof notion.NotionAuthError
+      ? 'トークンが正しくありません。Notion の「内部インテグレーションシークレット」を貼り付けてください。'
+      : (e as Error).message;
+    return html(c, await renderDashboard(db, acc, { error: m }), acc, 'ダッシュボード', 400);
+  }
+});
+
 app.post('/app/connect/notion/sync', async (c) => {
   const acc = (await account(c))!;
   const db = await sql();

@@ -3,6 +3,7 @@
  * 特に「別ワークスペースのデータが漏れないこと」は要件書 §12.3 でリリースゲートに
  * している項目なので、CIで毎回実行する。
  */
+import './env.ts'; // 他より先に環境変数を入れる（config.ts が読み込み時に固めるため）
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { openTestDb } from '../src/db.ts';

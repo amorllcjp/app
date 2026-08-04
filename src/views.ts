@@ -220,11 +220,7 @@ export interface DashboardData {
  */
 function renderNotion(d: DashboardData): string {
   const n = d.notion;
-  if (!n?.configured) {
-    return `<div class="card"><p style="margin:0" class="muted">
-      Notion 連携はこのサーバーではまだ設定されていません。
-      いまは Pack を開いて資料を貼り付けてください。</p></div>`;
-  }
+  if (!n) return '';
   const firstPack = d.packs[0];
   if (!firstPack) {
     return `<div class="card"><p style="margin:0" class="muted">
@@ -234,10 +230,33 @@ function renderNotion(d: DashboardData): string {
   if (!n.connection || n.connection.status !== 'active') {
     return `<div class="card">
       <p style="margin-top:0"><strong>Notion をつなぐと、貼り付けが要らなくなります。</strong></p>
-      <p class="small muted">つなぐ画面で、取り込みたいページを選びます。
-      <strong>選んだページだけ</strong>が対象で、Notion 全体を読むことはありません。</p>
-      <p><a class="btn" href="/app/connect/notion/start?pack_id=${esc(firstPack.id)}">Notion をつなぐ</a>
-         <span class="small muted">→ Pack「${esc(firstPack.name)}」に取り込みます</span></p>
+      <p class="small muted">取り込むのは<strong>あなたが Notion 側で許可したページだけ</strong>です。
+      ワークスペース全体を読むことはありません。</p>
+
+      <h3>方法1: トークンを貼る（すぐ試せる）</h3>
+      <ol class="small muted" style="padding-left:20px">
+        <li><a href="https://www.notion.so/my-integrations" target="_blank" rel="noopener">notion.so/my-integrations</a>
+            で「新しいインテグレーション」を作る（種類は<strong>内部</strong>、機能は<strong>コンテンツの読み取り</strong>だけでよい）</li>
+        <li>表示される<strong>内部インテグレーションシークレット</strong>をコピー</li>
+        <li>Notion で取り込みたいページを開き、右上「…」→「<strong>接続</strong>」→ 作ったインテグレーションを追加
+            <br>← <strong>ここで追加したページだけ</strong>が取り込まれます</li>
+        <li>下に貼り付けて「つなぐ」</li>
+      </ol>
+      <form method="post" action="/app/connect/notion/token">
+        <input type="hidden" name="pack_id" value="${esc(firstPack.id)}">
+        <label for="ntoken">内部インテグレーションシークレット</label>
+        <input id="ntoken" name="token" type="password" required placeholder="ntn_... または secret_...">
+        <p style="margin-top:14px"><button class="btn">つなぐ</button>
+          <span class="small muted">→ Pack「${esc(firstPack.name)}」に取り込みます</span></p>
+      </form>
+
+      ${
+        n.configured
+          ? `<h3>方法2: OAuth でつなぐ</h3>
+             <p class="small muted">他の人にも使わせる場合はこちら。Notion の画面でページを選びます。</p>
+             <p><a class="btn sec" href="/app/connect/notion/start?pack_id=${esc(firstPack.id)}">Notion でログインしてつなぐ</a></p>`
+          : `<p class="small muted">OAuth（Notion でログインしてつなぐ）は、このサーバーではまだ設定されていません。</p>`
+      }
     </div>`;
   }
 
