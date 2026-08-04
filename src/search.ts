@@ -1,17 +1,18 @@
 /**
- * 日本語検索。
+ * 日本語検索（PostgreSQL 版）。
  *
- * PostgreSQL の to_tsvector は日本語を語分割できず、SQLite FTS5 の trigram トークナイザは
- * 2文字クエリ（「単価」「田中」など）を取りこぼす。実測で確認済み。
- * そこで pg_bigm と同じ方式を自前で組む。
+ * 方式は SQLite 版と同じ二段構え。根拠は docs/adr/ADR-0002-技術判断.md。
  *
- *   1. 本文を2文字の重なりグラム（bigram）に展開し FTS5 に入れる
- *   2. クエリも bigram に展開し AND で引く（索引段階）
- *   3. ヒットした本文に対して、クエリ文字列そのものを含むか再チェックする（偽陽性の除去）
+ *   1. 本文を2文字の重なりグラム（bigram）に展開し tsvector('simple') に入れる
+ *   2. クエリも展開し AND（&）で候補を引く（GIN索引が効く）
+ *   3. 正規化済み本文にクエリ文字列そのものが含まれるか再チェックする（偽陽性の除去）
  *
- * 3 が無いと「bigram は全部あるが連続していない」文書が混ざる。
+ * 'simple' 設定は空白で区切るだけなので、こちらが作った bigram がそのまま lexeme になる。
+ * pg_bigm も PGroonga も pgvector も要らない。Neon の標準構成で動く。
+ *
+ * 3 が無いと「東京」「京都」を含むが「東京都」とは書かれていない文書が誤ってヒットする。
  */
-import type { DB } from './db.ts';
+import type { Sql } from './db.ts';
 import { SEARCH_LIMITS } from './config.ts';
 
 /** NFKC + 小文字化。全角英数と半角、大文字小文字の揺れを吸収する。 */
@@ -38,14 +39,20 @@ export function grams(s: string): string[] {
   return [...out];
 }
 
-/** FTS5 のクエリ文字列に安全に埋め込む。 */
-function quote(s: string): string {
-  return `"${s.replace(/"/g, '""')}"`;
+/** tsquery のリテラルにする。引用符内なので & | ! ( ) は演算子として解釈されない。 */
+function lexeme(g: string): string {
+  return `'${g.replace(/\\/g, '\\\\').replace(/'/g, "''")}'`;
 }
 
-/** 本文を索引用の文字列にする。 */
+/** 索引用の tsvector 入力文字列。 */
 export function indexPayload(text: string): string {
-  return grams(text).map(quote).join(' ');
+  return grams(text).join(' ');
+}
+
+/** クエリ用の tsquery 文字列。グラムが無ければ null。 */
+export function toTsQuery(query: string): string | null {
+  const gs = grams(query);
+  return gs.length ? gs.map(lexeme).join(' & ') : null;
 }
 
 /**
@@ -80,7 +87,7 @@ export function chunkText(body: string, maxChars = 800): string[] {
 }
 
 export interface SearchHit {
-  chunkId: number;
+  chunkId: string;
   documentId: string;
   packId: string;
   packName: string;
@@ -96,95 +103,116 @@ export interface SearchHit {
 /**
  * Pack 内を検索する。
  *
- * workspaceId は必ず SQL の条件に入れる。呼び出し側の絞り込みに頼らない
+ * workspace_id は必ず SQL の条件に入れる。呼び出し側の絞り込みに頼らない
  * （要件書 §12.2-3・§7.6: 別ワークスペースのIDを渡しても取得できないこと）。
  */
-export function search(
-  d: DB,
+export async function search(
+  db: Sql,
   opts: { workspaceId: string; query: string; packIds?: string[]; limit?: number },
-): SearchHit[] {
+): Promise<SearchHit[]> {
   const q = opts.query.trim();
   if (!q) return [];
+  const tsq = toTsQuery(q);
+  if (!tsq) return [];
   const limit = Math.min(opts.limit ?? SEARCH_LIMITS.maxResults, SEARCH_LIMITS.maxResults);
 
-  const gs = grams(q);
-  if (gs.length === 0) return [];
-  const match = gs.map(quote).join(' AND ');
-
-  const params: unknown[] = [match, opts.workspaceId];
+  const params: unknown[] = [tsq, opts.workspaceId, normalize(q)];
   let packFilter = '';
   if (opts.packIds && opts.packIds.length > 0) {
-    packFilter = ` and c.pack_id in (${opts.packIds.map(() => '?').join(',')})`;
-    params.push(...opts.packIds);
+    packFilter = ` and c.pack_id = any($${params.length + 1})`;
+    params.push(opts.packIds);
   }
+  params.push(limit);
 
-  // 索引で候補を広めに取り、再チェックで絞る。取りこぼしを防ぐため limit の数倍を引く。
-  const rows = d
-    .prepare(
-      `select c.id as chunkId, c.text as chunkText, c.document_id as documentId, c.pack_id as packId,
-              p.name as packName, doc.title, doc.source_url as sourceUrl, doc.origin,
-              doc.source_updated_at as sourceUpdatedAt, doc.fetched_at as fetchedAt
-         from chunk_index i
-         join chunks c    on c.id = i.rowid
-         join documents doc on doc.id = c.document_id
-         join packs p     on p.id = c.pack_id
-        where i.grams match ?
-          and c.workspace_id = ?
-          and doc.deleted_at is null
-          and p.status = 'active'
-          ${packFilter}
-        order by rank
-        limit ?`,
-    )
-    .all(...params, limit * 8) as Array<Omit<SearchHit, 'snippet'>>;
-
-  const needle = normalize(q);
-  const hits: SearchHit[] = [];
-  for (const r of rows) {
-    const hay = normalize(r.chunkText);
-    const at = hay.indexOf(needle);
-    if (at < 0) continue; // 偽陽性を除去
-    hits.push({ ...r, snippet: makeSnippet(r.chunkText, at, needle.length) });
-    if (hits.length >= limit) break;
-  }
-  return hits;
-}
-
-/** 一致箇所を中心に抜粋する。抜粋は必ず原文の一部であり、生成しない。 */
-function makeSnippet(text: string, at: number, len: number): string {
-  const span = SEARCH_LIMITS.snippetChars;
-  const start = Math.max(0, at - Math.floor((span - len) / 2));
-  const end = Math.min(text.length, start + span);
-  const body = text.slice(start, end);
-  return `${start > 0 ? '…' : ''}${body}${end < text.length ? '…' : ''}`;
-}
-
-/** ドキュメントをチャンク化して索引に入れる。既存チャンクは入れ替える。 */
-export function reindexDocument(
-  d: DB,
-  doc: { id: string; packId: string; workspaceId: string; body: string },
-): number {
-  const old = d.prepare('select id from chunks where document_id = ?').all(doc.id) as Array<{ id: number }>;
-  const delIdx = d.prepare('delete from chunk_index where rowid = ?');
-  for (const o of old) delIdx.run(o.id);
-  d.prepare('delete from chunks where document_id = ?').run(doc.id);
-
-  const insChunk = d.prepare(
-    'insert into chunks (document_id, pack_id, workspace_id, ord, text) values (?,?,?,?,?)',
+  const { rows } = await db.query<{
+    chunkid: string;
+    chunktext: string;
+    documentid: string;
+    packid: string;
+    packname: string;
+    title: string;
+    sourceurl: string | null;
+    origin: string;
+    sourceupdatedat: Date | string | null;
+    fetchedat: Date | string;
+  }>(
+    `select c.id::text as chunkid, c.text as chunktext, c.document_id as documentid, c.pack_id as packid,
+            p.name as packname, d.title, d.source_url as sourceurl, d.origin,
+            d.source_updated_at as sourceupdatedat, d.fetched_at as fetchedat
+       from chunks c
+       join documents d on d.id = c.document_id
+       join packs p on p.id = c.pack_id
+      where c.grams @@ to_tsquery('simple', $1)
+        and c.workspace_id = $2
+        and position($3 in c.norm_text) > 0
+        and d.deleted_at is null
+        and p.status = 'active'
+        ${packFilter}
+      order by ts_rank(c.grams, to_tsquery('simple', $1)) desc, c.id
+      limit $${params.length}`,
+    params,
   );
-  const insIdx = d.prepare('insert into chunk_index (rowid, grams) values (?,?)');
-  const parts = chunkText(doc.body);
-  parts.forEach((text, i) => {
-    const r = insChunk.run(doc.id, doc.packId, doc.workspaceId, i, text);
-    insIdx.run(r.lastInsertRowid as number, indexPayload(text));
-  });
-  return parts.length;
+
+  return rows.map((r) => ({
+    chunkId: r.chunkid,
+    documentId: r.documentid,
+    packId: r.packid,
+    packName: r.packname,
+    title: r.title,
+    sourceUrl: r.sourceurl,
+    origin: r.origin,
+    chunkText: r.chunktext,
+    snippet: makeSnippet(r.chunktext, q),
+    sourceUpdatedAt: iso(r.sourceupdatedat),
+    fetchedAt: iso(r.fetchedat) ?? '',
+  }));
 }
 
-/** ドキュメント削除時に索引も落とす。索引だけ残ると削除済みの内容が検索に出る。 */
-export function dropDocumentIndex(d: DB, documentId: string): void {
-  const old = d.prepare('select id from chunks where document_id = ?').all(documentId) as Array<{ id: number }>;
-  const delIdx = d.prepare('delete from chunk_index where rowid = ?');
-  for (const o of old) delIdx.run(o.id);
-  d.prepare('delete from chunks where document_id = ?').run(documentId);
+export function iso(v: Date | string | null | undefined): string | null {
+  if (!v) return null;
+  return v instanceof Date ? v.toISOString() : new Date(v).toISOString();
+}
+
+/**
+ * 一致箇所を中心に抜粋する。抜粋は必ず原文の一部であり、生成しない。
+ *
+ * 位置は原文で直接探すことを優先する。NFKC 正規化は文字数を変えることがあり
+ * （半角濁点カナなど）、正規化後の位置を原文に当てるとずれるため。
+ * どちらでも見つからない場合は先頭を返す。抜粋が原文の部分文字列であることは常に保つ。
+ */
+function makeSnippet(text: string, query: string): string {
+  const span = SEARCH_LIMITS.snippetChars;
+  let at = text.toLowerCase().indexOf(query.toLowerCase());
+  if (at < 0) at = normalize(text).indexOf(normalize(query));
+  if (at < 0) at = 0;
+  const start = Math.max(0, Math.min(at - Math.floor(span / 3), Math.max(0, text.length - span)));
+  const end = Math.min(text.length, start + span);
+  return `${start > 0 ? '…' : ''}${text.slice(start, end)}${end < text.length ? '…' : ''}`;
+}
+
+/**
+ * ドキュメントをチャンクに割って索引を張り直す。
+ * chunks 行に tsvector を同居させているので、行を消せば索引も消える。
+ */
+export async function reindexDocument(
+  db: Sql,
+  doc: { id: string; packId: string; workspaceId: string; body: string },
+): Promise<number> {
+  await db.query('delete from chunks where document_id = $1', [doc.id]);
+  const parts = chunkText(doc.body);
+  if (parts.length === 0) return 0;
+
+  // 1文で全チャンクを入れる。サーバーレスでは往復回数がそのまま遅延になる。
+  const values: string[] = [];
+  const params: unknown[] = [];
+  parts.forEach((text, i) => {
+    const b = params.length;
+    values.push(`($${b + 1},$${b + 2},$${b + 3},$${b + 4},$${b + 5},$${b + 6},to_tsvector('simple',$${b + 7}))`);
+    params.push(doc.id, doc.packId, doc.workspaceId, i, text, normalize(text), indexPayload(text));
+  });
+  await db.query(
+    `insert into chunks (document_id, pack_id, workspace_id, ord, text, norm_text, grams) values ${values.join(',')}`,
+    params,
+  );
+  return parts.length;
 }

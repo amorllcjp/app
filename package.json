@@ -3,24 +3,29 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "engines": { "node": ">=22" },
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
     "dev": "node --experimental-strip-types --watch src/server.ts",
     "start": "node --experimental-strip-types src/server.ts",
+    "migrate": "node --experimental-strip-types src/migrate.ts",
     "test": "node --experimental-strip-types --test test/*.test.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@electric-sql/pglite": "^0.5.0",
     "@hono/node-server": "^1.13.7",
     "@modelcontextprotocol/server": "^2.0.0",
-    "better-sqlite3": "^12.0.0",
+    "@neondatabase/serverless": "^0.10.4",
     "hono": "^4.6.14",
     "stripe": "^17.5.0",
+    "ws": "^8.18.0",
     "zod": "^4.0.0"
   },
   "devDependencies": {
-    "@types/better-sqlite3": "^7.6.12",
     "@types/node": "^22.10.2",
+    "@types/ws": "^8.5.13",
     "typescript": "^5.7.2"
   }
 }

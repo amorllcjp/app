@@ -11,12 +11,16 @@ SESSION_SECRET=$(openssl rand -base64 32) npm start   # http://localhost:8787
 npm test                                              # 26件
 ```
 
+DBは本番が **Neon（PostgreSQL）**、ローカルとテストが **PGlite**（Postgres の WASM ビルド）。
+`DATABASE_URL` 未設定なら自動で PGlite になるので、何も用意せず動く。
+テストも PGlite 上で走るため、Docker も外部サービスも要らない。
+
 ## できること
 
 | | |
 |---|---|
 | 取り込み | Markdown / テキストの貼り付け |
-| 検索 | 日本語のbigram索引。2文字語（単価・面談）も取りこぼさない |
+| 検索 | 日本語のbigram索引（tsvector + GIN）。2文字語（単価・面談）も取りこぼさない。拡張不要 |
 | 出典 | 全結果に Pack名・タイトル・出典URL・由来・取得時刻が付く。出典の無い結果は返さない |
 | AI接続 | リモートMCP（Claude / Claude Code / Cursor）。2025系と2026-07-28系の両方 |
 | 逃げ道 | Markdownエクスポート。MCP非対応のAIにも貼り付けて使える |
@@ -51,18 +55,21 @@ claude mcp add --transport http context-bridge https://your-domain.example/mcp \
 
 ```
 src/config.ts    プランと上限。料金はここだけ見れば分かる
-src/db.ts        SQLiteスキーマ、監査ログ
+src/db.ts        Postgresスキーマ、driver抽象（Neon / PGlite）、監査ログ
 src/search.ts    bigram索引 + 実体再チェック（日本語検索の中核）
 src/auth.ts      パスワード、セッション、MCPトークン
 src/packs.ts     Pack・資料・出典・保存・エクスポート・上限
 src/billing.ts   Stripe Checkout / Portal / Webhook
 src/mcp.ts       MCPサーバー（5ツール）
 src/views.ts     画面（サーバー描画HTML、ビルド工程なし）
-src/server.ts    ルーティング
+src/app.ts       ルーティング（実行環境に依存しない）
+src/server.ts    ローカル起動（@hono/node-server）
+api/index.ts     Vercel エントリ（hono/vercel）
+src/migrate.ts   マイグレーション実行
 test/core.test.ts
 ```
 
-依存は5つだけ（hono / better-sqlite3 / @modelcontextprotocol/server / stripe / zod）。
+`src/app.ts` は実行環境に依存しないので、Vercel 以外へ移すときもエントリだけ差し替えればよい。
 
 ## テストが守っている不変条件
 

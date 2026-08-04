@@ -9,7 +9,14 @@ export const config = {
   port: Number(process.env.PORT ?? 8787),
   /** 公開URL。Stripeのリダイレクトと、MCP接続手順の表示に使う。 */
   baseUrl: (process.env.BASE_URL ?? 'http://localhost:8787').replace(/\/$/, ''),
-  dbPath: process.env.DB_PATH ?? './data/context-bridge.db',
+  /**
+   * Neon の接続文字列。Vercel では必ず pooled（-pooler 付き）を使う。
+   * サーバーレスは同時実行が増えるとDB接続を食い潰すため、直結にしない。
+   * 未設定ならローカルの PGlite にフォールバックする。
+   */
+  databaseUrl: process.env.DATABASE_URL ?? '',
+  /** PGlite のデータ置き場。未設定ならインメモリ（プロセス終了で消える）。 */
+  pgliteDir: process.env.PGLITE_DIR ?? undefined,
   /** セッションCookieの署名鍵。本番では必ず設定する（未設定なら起動を止める）。 */
   sessionSecret: process.env.SESSION_SECRET ?? '',
   stripe: {
