@@ -88,6 +88,7 @@ CIで毎回実行する。ここが壊れたらリリースしない。
 
 | | |
 |---|---|
+| [使い方と動作確認](docs/使い方.md) | **操作手順と、壊れていないことの確かめ方** |
 | [要件定義書 v2](docs/requirements/unabyss-japan-requirements-v2.md) | 元の要件。事実と仮説を分けた基準 |
 | [実装計画 v1](docs/plan/implementation-plan-v1.md) | Gate 0〜4 の計画 |
 | [ADR-0001 削除した要件](docs/adr/ADR-0001-削除した要件.md) | **何を削り、いつ戻すか** |
