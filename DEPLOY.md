@@ -55,8 +55,25 @@ npm run typecheck
 
 現在の構成は **両方ともシンガポール**（Neon に東京リージョンが無かったため）。
 
+関数リージョンは `vercel.json` で指定している。設定がリポジトリに残るので、
+UI で毎回設定し直す必要がない。
+
+```json
+{ "regions": ["sin1"] }
+```
+
+反映されるのは**次のデプロイから**。UI からも設定できる。
+
 ```
 Vercel → プロジェクト → Settings → Functions → Function Region → Singapore (sin1)
+```
+
+両方を設定した場合、どちらが優先されるかは環境によるため、
+**必ず `/api/ping` の `region` を見て実際の値を確認すること。**
+
+```bash
+curl -s https://<あなたのURL>/api/ping
+# {"pong":true,...,"region":"sin1",...}
 ```
 
 Vercel の既定は米国東部（`iad1`）。ここを放置して Neon だけシンガポールにすると、
