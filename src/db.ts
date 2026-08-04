@@ -179,9 +179,16 @@ const STATEMENTS: string[] = [
 
 export async function migrate(db: Sql): Promise<void> {
   for (const stmt of STATEMENTS) {
-    if (stmt.trim().startsWith('--')) continue;
     await db.query(stmt);
   }
+}
+
+/**
+ * 同じ定義を SQL として出力する。ローカル環境が無い場合に
+ * Neon の SQL Editor へ貼って初期化できるようにするため。
+ */
+export function schemaSql(): string {
+  return STATEMENTS.map((s) => `${s.trim()};`).join('\n\n');
 }
 
 export function nowIso(): string {

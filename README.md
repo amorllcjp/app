@@ -66,6 +66,8 @@ src/app.ts       ルーティング（実行環境に依存しない）
 src/server.ts    ローカル起動（@hono/node-server）
 api/index.ts     Vercel エントリ（hono/vercel）
 src/migrate.ts   マイグレーション実行
+api/ping.ts      依存ゼロの疎通確認（切り分け用）
+docs/schema.sql  スキーマのSQL（npm run schema で生成）
 test/core.test.ts
 ```
 

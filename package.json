@@ -11,7 +11,8 @@
     "start": "node --experimental-strip-types src/server.ts",
     "migrate": "node --experimental-strip-types src/migrate.ts",
     "test": "node --experimental-strip-types --test test/*.test.ts",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "schema": "node --experimental-strip-types src/print-schema.ts"
   },
   "dependencies": {
     "@electric-sql/pglite": "^0.5.0",

@@ -91,9 +91,15 @@ Vercel のコールドスタートと重なると初回は数秒かかること�
    - サーバーレスは同時実行が増えるとDB接続を食い潰す。直結の接続文字列を使わないこと
 2. マイグレーションを一度だけ実行する
 
+手元にリポジトリがある場合:
+
 ```bash
 DATABASE_URL='postgresql://...-pooler.../db?sslmode=require' npm run migrate
 ```
+
+**ローカル環境が無い場合**は、[`docs/schema.sql`](docs/schema.sql) の中身を
+Neon の画面の **SQL Editor** に貼って実行すれば同じ結果になる。
+このファイルは `npm run schema` で `src/db.ts` から生成しているため、本体とずれない。
 
 スキーマ変更を入れたときは、デプロイのたびにこれを実行する。
 すべて `IF NOT EXISTS` なので、二重に実行しても壊れない。
