@@ -25,6 +25,15 @@ export const config = {
     /** Pro プランの Price ID（Stripeダッシュボードで作成したもの）。 */
     proPriceId: process.env.STRIPE_PRO_PRICE_ID ?? '',
   },
+  /**
+   * Notion 連携。Notion の Integrations 画面で Public integration を作り、
+   * Redirect URI に <BASE_URL>/connect/notion/callback を登録して得る。
+   * 未設定なら連携メニューを出さない（できないことを出さないため）。
+   */
+  notion: {
+    clientId: process.env.NOTION_CLIENT_ID ?? '',
+    clientSecret: process.env.NOTION_CLIENT_SECRET ?? '',
+  },
   /** 特定商取引法に基づく表記。日本で有料販売する場合、記載は法令上の義務。 */
   legal: {
     sellerName: process.env.LEGAL_SELLER_NAME ?? '',
@@ -92,3 +101,8 @@ export const SEARCH_LIMITS = {
   maxResults: 10,
   snippetChars: 300,
 } as const;
+
+/** Notion 連携が使える状態か。未設定なら画面に出さない。 */
+export function notionConfigured(): boolean {
+  return Boolean(config.notion.clientId && config.notion.clientSecret);
+}

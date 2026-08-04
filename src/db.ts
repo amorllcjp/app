@@ -169,6 +169,64 @@ const STATEMENTS: string[] = [
    )`,
   `create index if not exists idx_audit_ws on audit_events(workspace_id, created_at desc)`,
 
+  /*
+   * 外部サービスとの接続。トークンは暗号化して token_ref に入れる。
+   * 平文をそのまま置かない（要件書 FR-002）。
+   */
+  `create table if not exists connections (
+     id text primary key,
+     workspace_id text not null references workspaces(id) on delete cascade,
+     provider text not null,
+     external_account_id text,
+     workspace_name text,
+     granted_scopes text,
+     status text not null default 'active',
+     token_ref text not null,
+     created_at timestamptz not null default now(),
+     last_verified_at timestamptz
+   )`,
+  `create index if not exists idx_conn_ws on connections(workspace_id)`,
+
+  /*
+   * 取り込み対象。Notion では「利用者が共有を許可したページ」が1行になる。
+   * 勝手にワークスペース全体を読まないことを、この表で担保する（FR-003）。
+   */
+  `create table if not exists source_selections (
+     id text primary key,
+     connection_id text not null references connections(id) on delete cascade,
+     workspace_id text not null references workspaces(id) on delete cascade,
+     pack_id text not null references packs(id) on delete cascade,
+     provider_object_id text not null,
+     title text,
+     source_url text,
+     enabled boolean not null default true,
+     external_updated_at timestamptz,
+     last_synced_at timestamptz,
+     document_id text,
+     created_at timestamptz not null default now()
+   )`,
+  `create index if not exists idx_sel_conn on source_selections(connection_id)`,
+  `create unique index if not exists idx_sel_object on source_selections(connection_id, provider_object_id)`,
+
+  /*
+   * 同期の実行記録。v1 は 4状態だけ（実行中 / 完了 / 一部失敗 / 失敗）。
+   * 要件書 FR-005 の6状態は、必要になってから増やす（ADR-0003）。
+   */
+  `create table if not exists sync_runs (
+     id text primary key,
+     connection_id text not null references connections(id) on delete cascade,
+     workspace_id text not null references workspaces(id) on delete cascade,
+     status text not null,
+     added integer not null default 0,
+     updated integer not null default 0,
+     removed integer not null default 0,
+     failed integer not null default 0,
+     error text,
+     started_at timestamptz not null default now(),
+     finished_at timestamptz
+   )`,
+  `create index if not exists idx_run_conn on sync_runs(connection_id, started_at desc)`,
+
   `create table if not exists usage_counters (
      workspace_id text not null,
      period text not null,

@@ -36,6 +36,9 @@ import {
   LimitError,
 } from './packs.ts';
 import { createCheckoutSession, createPortalSession, handleWebhook, billingConfigured } from './billing.ts';
+import { saveConnection, activeConnection, disconnect, syncNotion, syncStatus } from './connections.ts';
+import * as notion from './connectors/notion.ts';
+import { notionConfigured } from './config.ts';
 import { mcpHandler } from './mcp.ts';
 import * as V from './views.ts';
 
@@ -226,6 +229,7 @@ async function renderDashboard(
       packLimit: plan.limits.packs,
     },
     tokenPrefix: tokRows[0]?.prefix ?? null,
+    notion: { configured: notionConfigured(), ...(await syncStatus(db, ws, 'notion')) },
     ...extra,
   });
 }
@@ -355,6 +359,97 @@ app.post('/app/danger', async (c) => {
   await db.query('delete from users where id = $1', [acc.userId]);
   deleteCookie(c, COOKIE, { path: '/' });
   return c.redirect('/');
+});
+
+// --- Notion 連携 ---
+
+/*
+ * OAuth の state は署名付き Cookie に置く。CSRF で他人の Notion を
+ * 勝手に繋がせないため、コールバックで必ず突き合わせる。
+ */
+const NOTION_STATE = 'cb_notion_state';
+
+app.get('/app/connect/notion/start', async (c) => {
+  const acc = (await account(c))!;
+  if (!notionConfigured()) return c.redirect('/app/connect');
+  const packId = c.req.query('pack_id');
+  if (!packId) return c.redirect('/app');
+  const state = `${crypto.randomUUID()}:${packId}`;
+  setCookie(c, NOTION_STATE, state, {
+    path: '/',
+    httpOnly: true,
+    sameSite: 'Lax',
+    secure: config.baseUrl.startsWith('https://'),
+    maxAge: 600,
+  });
+  await audit(await sql(), acc.workspaceId, acc.userId, 'connection.oauth_started', null, { provider: 'notion' });
+  return c.redirect(
+    notion.authorizeUrl(config.notion.clientId, `${config.baseUrl}/app/connect/notion/callback`, state),
+  );
+});
+
+app.get('/app/connect/notion/callback', async (c) => {
+  const acc = (await account(c))!;
+  const db = await sql();
+  const expected = getCookie(c, NOTION_STATE);
+  deleteCookie(c, NOTION_STATE, { path: '/' });
+
+  const code = c.req.query('code');
+  const state = c.req.query('state');
+  if (!code || !state || !expected || state !== expected) {
+    return html(c, await renderDashboard(db, acc, { error: 'Notion の接続を確認できませんでした。もう一度お試しください。' }), acc, 'ダッシュボード', 400);
+  }
+  const packId = state.split(':')[1] ?? '';
+
+  try {
+    const tok = await notion.exchangeCode({
+      clientId: config.notion.clientId,
+      clientSecret: config.notion.clientSecret,
+      redirectUri: `${config.baseUrl}/app/connect/notion/callback`,
+      code,
+    });
+    const connId = await saveConnection(db, acc.workspaceId, acc.userId, {
+      provider: 'notion',
+      token: tok.access_token,
+      externalAccountId: tok.workspace_id ?? null,
+      workspaceName: tok.workspace_name ?? null,
+    });
+    // 接続直後に1回同期する。ここで中身が入らないと「繋いだのに空」になる
+    const r = await syncNotion(db, acc.workspaceId, acc.userId, { connectionId: connId, packId });
+    const msg =
+      r.status === 'failed'
+        ? `Notion に接続しましたが、取り込みに失敗しました: ${r.error ?? '不明なエラー'}`
+        : `Notion に接続しました。${r.added}件を取り込みました。`;
+    return html(c, await renderDashboard(db, acc, r.status === 'failed' ? { error: msg } : { notice: msg }), acc, 'ダッシュボード');
+  } catch (e) {
+    return html(c, await renderDashboard(db, acc, { error: (e as Error).message }), acc, 'ダッシュボード', 400);
+  }
+});
+
+app.post('/app/connect/notion/sync', async (c) => {
+  const acc = (await account(c))!;
+  const db = await sql();
+  const f = await c.req.parseBody();
+  const conn = await activeConnection(db, acc.workspaceId, 'notion');
+  if (!conn) return c.redirect('/app');
+  const r = await syncNotion(db, acc.workspaceId, acc.userId, {
+    connectionId: conn.id,
+    packId: String(f.pack_id ?? ''),
+  });
+  const msg =
+    r.status === 'failed'
+      ? `同期に失敗しました: ${r.error ?? '不明なエラー'}`
+      : `同期しました。追加${r.added}件 / 更新${r.updated}件 / 削除${r.removed}件` +
+        (r.failed ? ` / 失敗${r.failed}件（${r.error ?? ''}）` : '');
+  return html(c, await renderDashboard(db, acc, r.status === 'failed' ? { error: msg } : { notice: msg }), acc, 'ダッシュボード');
+});
+
+app.post('/app/connect/notion/disconnect', async (c) => {
+  const acc = (await account(c))!;
+  const db = await sql();
+  const conn = await activeConnection(db, acc.workspaceId, 'notion');
+  if (conn) await disconnect(db, acc.workspaceId, acc.userId, conn.id);
+  return html(c, await renderDashboard(db, acc, { notice: 'Notion の接続を解除し、取り込んだ資料も削除しました。' }), acc, 'ダッシュボード');
 });
 
 // --- 課金導線 ---

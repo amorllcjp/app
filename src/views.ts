@@ -131,15 +131,16 @@ export function landing(): string {
 
 <h2>できること</h2>
 <div class="card">
-<p><strong>1. Pack を作る</strong> — 案件や顧客ごとに、決定事項・前提・議事メモを貼り付けます。</p>
+<p><strong>1. Pack を作る</strong> — 案件や顧客ごとに、決定事項・前提・議事メモを入れます。
+Notion をつなげば、選んだページがそのまま入ります。</p>
 <p><strong>2. AIをつなぐ</strong> — 発行されたURLとトークンを Claude / Cursor に登録します。</p>
 <p><strong>3. 出典つきで引く</strong> — AIが答えるとき、どの資料の何行目かが必ず添えられます。</p>
 </div>
 
 <h2>できないことを先に書きます</h2>
 <div class="warn">
-<p style="margin-top:0"><strong>自動同期はしません。</strong> Notion や Chatwork との連携は未実装です。
-現在の取り込み方法は、Markdown・テキストの貼り付けだけです。</p>
+<p style="margin-top:0"><strong>常時の自動同期はしません。</strong> Notion 連携はありますが、
+取り込むのは<strong>同期ボタンを押したとき</strong>だけです。Chatwork 連携はまだありません。</p>
 <p><strong>「常に最新」を約束しません。</strong> 表示するのは利用者が取り込んだ時点の時刻です。
 鮮度が重要な情報は元の資料で確認してください。</p>
 <p style="margin-bottom:0"><strong>AIが勝手に覚えることはありません。</strong> 保存は利用者が確認したときだけ行われます。</p>
@@ -199,10 +200,77 @@ export interface DashboardData {
   usage: { searches: number; searchLimit: number; docs: number; docLimit: number; packLimit: number };
   plan: Plan;
   tokenPrefix: string | null;
+  notion?: {
+    configured: boolean;
+    connection: { id: string; workspace_name: string | null; status: string } | null;
+    pages: number;
+    lastRun: { status: string; added: number; updated: number; removed: number; failed: number; error: string | null; finished_at: string | null } | null;
+  };
   freshToken?: string | null;
   notice?: string | null;
   error?: string | null;
   upgraded?: boolean;
+}
+
+/**
+ * Notion 連携の状態。
+ *
+ * ここが「入力の物語」を担う部分。手で貼らせるのをやめ、すでに Notion に
+ * 書いてあるものが入るようにする（ADR-0003）。
+ */
+function renderNotion(d: DashboardData): string {
+  const n = d.notion;
+  if (!n?.configured) {
+    return `<div class="card"><p style="margin:0" class="muted">
+      Notion 連携はこのサーバーではまだ設定されていません。
+      いまは Pack を開いて資料を貼り付けてください。</p></div>`;
+  }
+  const firstPack = d.packs[0];
+  if (!firstPack) {
+    return `<div class="card"><p style="margin:0" class="muted">
+      先に Pack を作ってください。Notion のページはその Pack に取り込まれます。</p></div>`;
+  }
+
+  if (!n.connection || n.connection.status !== 'active') {
+    return `<div class="card">
+      <p style="margin-top:0"><strong>Notion をつなぐと、貼り付けが要らなくなります。</strong></p>
+      <p class="small muted">つなぐ画面で、取り込みたいページを選びます。
+      <strong>選んだページだけ</strong>が対象で、Notion 全体を読むことはありません。</p>
+      <p><a class="btn" href="/app/connect/notion/start?pack_id=${esc(firstPack.id)}">Notion をつなぐ</a>
+         <span class="small muted">→ Pack「${esc(firstPack.name)}」に取り込みます</span></p>
+    </div>`;
+  }
+
+  const run = n.lastRun;
+  const statusLabel: Record<string, string> = {
+    completed: '完了', partial: '一部失敗', failed: '失敗', running: '実行中',
+  };
+  return `<div class="card">
+    <p style="margin-top:0"><strong>Notion に接続中</strong>
+      ${n.connection.workspace_name ? `<span class="small muted">（${esc(n.connection.workspace_name)}）</span>` : ''}</p>
+    <table>
+      <tr><th>取り込み対象</th><td>${n.pages} ページ</td></tr>
+      <tr><th>前回の同期</th><td>${
+        run
+          ? `${esc(statusLabel[run.status] ?? run.status)} ／ 追加${run.added} 更新${run.updated} 削除${run.removed}` +
+            (run.failed ? ` <span style="color:var(--warn)">失敗${run.failed}</span>` : '') +
+            (run.finished_at ? `<div class="small muted">${esc(run.finished_at.slice(0, 19).replace('T', ' '))}</div>` : '')
+          : 'まだ実行していません'
+      }</td></tr>
+      ${run?.error ? `<tr><th>エラー</th><td class="small">${esc(run.error)}</td></tr>` : ''}
+    </table>
+    <form method="post" action="/app/connect/notion/sync" style="display:inline">
+      <input type="hidden" name="pack_id" value="${esc(firstPack.id)}">
+      <button class="btn">いま同期する</button>
+    </form>
+    <form method="post" action="/app/connect/notion/disconnect" style="display:inline;margin-left:8px"
+          onsubmit="return confirm('接続を解除し、Notionから取り込んだ資料も削除します。よろしいですか？')">
+      <button class="btn sec">接続を解除</button>
+    </form>
+    <p class="small muted" style="margin-bottom:0">
+      自動同期はまだありません。押したときだけ取り込みます。
+      Notion 側で削除・共有解除したページは、同期時に索引から外れます。</p>
+  </div>`;
 }
 
 export function dashboard(d: DashboardData): string {
@@ -250,6 +318,9 @@ ${
     <p style="margin-top:16px"><button class="btn">Packを作る</button></p>
   </form>`
 }
+
+<h2>資料を自動で入れる</h2>
+${renderNotion(d)}
 
 <h2>AIをつなぐ</h2>
 <div class="card">

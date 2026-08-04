@@ -145,6 +145,34 @@ vercel deploy --prod
 `BASE_URL` は必ず本番のURLにする。ここが `http://` のままだとセッションCookieの
 `secure` 属性が付かず、MCPの接続手順にも誤ったURLが表示される。
 
+## 4.5 Notion 連携の設定（任意だが、これが「入力の物語」）
+
+未設定なら連携メニューは出ない。手動の貼り付けだけで動く。
+
+1. Notion の **Integrations** で **Public integration** を作成
+2. **Redirect URI** に次を登録
+
+```
+https://<あなたのURL>/app/connect/notion/callback
+```
+
+3. Client ID / Client Secret を環境変数に設定して再デプロイ
+
+```bash
+vercel env add NOTION_CLIENT_ID production
+vercel env add NOTION_CLIENT_SECRET production
+```
+
+### 動作確認
+
+1. ダッシュボードの「Notion をつなぐ」を押す
+2. Notion の画面で**取り込みたいページを選ぶ**（ここで選んだものだけが対象）
+3. 戻ってきたら「◯件を取り込みました」と出る
+4. Pack を開いて検索し、出典が Notion のページURLになっていることを確認
+
+**取り込めるのは利用者が選んだページだけ。** ワークスペース全体は読めない。
+Notion 側で削除・共有解除したページは、次の同期で索引から外れる。
+
 ## 5. Stripe の設定
 
 1. 商品「Context Bridge Pro」を作り、**月額 2,980円（JPY）の定期価格**を追加

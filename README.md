@@ -19,7 +19,7 @@ DBは本番が **Neon（PostgreSQL）**、ローカルとテストが **PGlite**
 
 | | |
 |---|---|
-| 取り込み | Markdown / テキストの貼り付け |
+| 取り込み | **Notion 連携**（選んだページを同期）／ Markdown・テキストの貼り付け |
 | 検索 | 日本語のbigram索引（tsvector + GIN）。2文字語（単価・面談）も取りこぼさない。拡張不要 |
 | 出典 | 全結果に Pack名・タイトル・出典URL・由来・取得時刻が付く。出典の無い結果は返さない |
 | AI接続 | リモートMCP（Streamable HTTP）。2025系と2026-07-28系の両方。実機での確認状況は[互換性マトリクス](docs/互換性マトリクス.md) |
@@ -28,7 +28,8 @@ DBは本番が **Neon（PostgreSQL）**、ローカルとテストが **PGlite**
 
 ## できないこと（意図的に作っていない）
 
-- **自動同期しない。** Notion / Chatwork 連携は未実装。理由と復活条件は [ADR-0001](docs/adr/ADR-0001-削除した要件.md)
+- **常時の自動同期はしない。** Notion は同期ボタンを押したときだけ取り込む。Chatwork 連携は未実装
+  （[ADR-0001](docs/adr/ADR-0001-削除した要件.md) D2 / [ADR-0003](docs/adr/ADR-0003-Notionコネクタを戻す.md)）
 - **「常に最新」を約束しない。** 表示するのは取り込み時点の時刻
 - **AIが勝手に保存しない。** `context_save` は `confirm=true` が無ければ保存しない
 - **外部サービスへ書き込まない。** メール送信もメッセージ投稿もしない
@@ -65,6 +66,8 @@ src/views.ts     画面（サーバー描画HTML、ビルド工程なし）
 src/app.ts       ルーティング（実行環境に依存しない）
 src/server.ts    ローカル起動（@hono/node-server）
 api/index.ts     Vercel エントリ（hono/vercel）
+src/connections.ts     接続・トークン暗号化・同期
+src/connectors/notion.ts  Notion API（fetch直叩き、SDKなし）
 src/migrate.ts   マイグレーション実行
 api/ping.ts      依存ゼロの疎通確認（切り分け用）
 docs/schema.sql  スキーマのSQL（npm run schema で生成）
@@ -94,6 +97,7 @@ CIで毎回実行する。ここが壊れたらリリースしない。
 | [実装計画 v1](docs/plan/implementation-plan-v1.md) | Gate 0〜4 の計画 |
 | [ADR-0001 削除した要件](docs/adr/ADR-0001-削除した要件.md) | **何を削り、いつ戻すか** |
 | [ADR-0002 技術判断](docs/adr/ADR-0002-技術判断.md) | 検索方式、MCP、認証の根拠と実測値 |
+| [ADR-0003 Notionコネクタを戻す](docs/adr/ADR-0003-Notionコネクタを戻す.md) | **なぜ削り、なぜ戻したか（入力の物語）** |
 | [DEPLOY.md](DEPLOY.md) | リリース手順と公開前チェック |
 
 ## 公開前に必ず読むこと

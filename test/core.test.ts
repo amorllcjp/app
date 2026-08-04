@@ -19,6 +19,14 @@ import {
   LimitError,
 } from '../src/packs.ts';
 import { grams, chunkText, normalize } from '../src/search.ts';
+import {
+  encryptToken,
+  decryptToken,
+  saveConnection,
+  syncNotion,
+  syncStatus,
+  disconnect,
+} from '../src/connections.ts';
 
 process.env.SESSION_SECRET ??= 'test-secret-for-unit-tests';
 
@@ -334,5 +342,137 @@ describe('資料が0件のときの案内', () => {
     const s = await packStatus(d, a.workspaceId);
     assert.equal(s.packs[0]!.documents, 0);
     assert.ok(s.packs[0]!.note.includes('資料が1件も入っていません'));
+  });
+});
+
+describe('Notion コネクタ（ADR-0003）', () => {
+  /** Notion API の代わり。実際の通信はせず、渡したページを返す。 */
+  function stubNotion(pages: Array<{ id: string; title: string; edited: string; body: string }>) {
+    return async (url: string | URL | Request): Promise<Response> => {
+      const u = String(url);
+      if (u.endsWith('/search')) {
+        return Response.json({
+          results: pages.map((p) => ({
+            id: p.id,
+            url: `https://notion.so/${p.id}`,
+            last_edited_time: p.edited,
+            properties: { title: { type: 'title', title: [{ plain_text: p.title }] } },
+          })),
+          has_more: false,
+        });
+      }
+      const m = /\/blocks\/([^/]+)\/children/.exec(u);
+      if (m) {
+        const page = pages.find((p) => p.id === m[1]);
+        return Response.json({
+          results: page ? [{ id: 'b1', type: 'paragraph', paragraph: { rich_text: [{ plain_text: page.body }] } }] : [],
+          has_more: false,
+        });
+      }
+      return Response.json({}, { status: 404 });
+    };
+  }
+
+  async function connected(d: Awaited<ReturnType<typeof openTestDb>>, a: { workspaceId: string; userId: string }) {
+    const pack = await createPack(d, a.workspaceId, a.userId, { name: 'A案件' });
+    const connId = await saveConnection(d, a.workspaceId, a.userId, {
+      provider: 'notion',
+      token: 'secret_notion_token',
+      workspaceName: 'テストWS',
+    });
+    return { pack, connId };
+  }
+
+  test('トークンは暗号化して保存し、復号できる', async () => {
+    const enc = encryptToken('secret_notion_token');
+    assert.ok(!enc.includes('secret_notion_token'), '平文が残っている');
+    assert.equal(decryptToken(enc), 'secret_notion_token');
+  });
+
+  test('DBに平文のトークンが残らない', async () => {
+    const { d, a } = await setup();
+    await connected(d, a);
+    const { rows } = await d.query<{ token_ref: string }>('select token_ref from connections');
+    assert.ok(rows[0]);
+    assert.ok(!rows[0]!.token_ref.includes('secret_notion_token'), 'DBに平文が入っている');
+  });
+
+  test('Notionのページを取り込み、出典つきで検索できる', async () => {
+    const { d, a } = await setup();
+    const { pack, connId } = await connected(d, a);
+    const f = stubNotion([
+      { id: 'p1', title: 'キックオフ議事録', edited: '2026-07-15T00:00:00.000Z', body: '単価は8万円で合意。' },
+    ]);
+    const r = await syncNotion(d, a.workspaceId, a.userId, { connectionId: connId, packId: pack.id, fetcher: f as never });
+    assert.equal(r.status, 'completed');
+    assert.equal(r.added, 1);
+
+    const hit = (await searchWithEvidence(d, a.workspaceId, a.userId, { query: '単価' })).results[0]!;
+    assert.equal(hit.title, 'キックオフ議事録');
+    assert.equal(hit.source_url, 'https://notion.so/p1', 'NotionのURLが出典になっていない');
+    assert.ok(hit.excerpt.includes('8万円'));
+  });
+
+  test('変更が無いページは取り込み直さない', async () => {
+    const { d, a } = await setup();
+    const { pack, connId } = await connected(d, a);
+    const pages = [{ id: 'p1', title: 'メモ', edited: '2026-07-15T00:00:00.000Z', body: '単価は8万円。' }];
+    await syncNotion(d, a.workspaceId, a.userId, { connectionId: connId, packId: pack.id, fetcher: stubNotion(pages) as never });
+    const second = await syncNotion(d, a.workspaceId, a.userId, { connectionId: connId, packId: pack.id, fetcher: stubNotion(pages) as never });
+    assert.equal(second.added, 0);
+    assert.equal(second.updated, 0, '変更が無いのに取り込み直している');
+  });
+
+  test('更新されたページは入れ直され、古い内容が検索に残らない', async () => {
+    const { d, a } = await setup();
+    const { pack, connId } = await connected(d, a);
+    await syncNotion(d, a.workspaceId, a.userId, {
+      connectionId: connId, packId: pack.id,
+      fetcher: stubNotion([{ id: 'p1', title: 'メモ', edited: '2026-07-15T00:00:00.000Z', body: '単価は8万円。' }]) as never,
+    });
+    const r = await syncNotion(d, a.workspaceId, a.userId, {
+      connectionId: connId, packId: pack.id,
+      fetcher: stubNotion([{ id: 'p1', title: 'メモ', edited: '2026-07-20T00:00:00.000Z', body: '単価は12万円に変更。' }]) as never,
+    });
+    assert.equal(r.updated, 1);
+    assert.equal((await searchWithEvidence(d, a.workspaceId, a.userId, { query: '8万円' })).results.length, 0, '古い内容が残っている');
+    assert.equal((await searchWithEvidence(d, a.workspaceId, a.userId, { query: '12万円' })).results.length, 1);
+  });
+
+  test('Notion側で消えたページは索引から外れる', async () => {
+    const { d, a } = await setup();
+    const { pack, connId } = await connected(d, a);
+    await syncNotion(d, a.workspaceId, a.userId, {
+      connectionId: connId, packId: pack.id,
+      fetcher: stubNotion([{ id: 'p1', title: 'メモ', edited: '2026-07-15T00:00:00.000Z', body: '単価は8万円。' }]) as never,
+    });
+    const r = await syncNotion(d, a.workspaceId, a.userId, {
+      connectionId: connId, packId: pack.id, fetcher: stubNotion([]) as never,
+    });
+    assert.equal(r.removed, 1);
+    assert.equal((await searchWithEvidence(d, a.workspaceId, a.userId, { query: '単価' })).results.length, 0);
+  });
+
+  test('接続解除で取り込んだ資料も消える', async () => {
+    const { d, a } = await setup();
+    const { pack, connId } = await connected(d, a);
+    await syncNotion(d, a.workspaceId, a.userId, {
+      connectionId: connId, packId: pack.id,
+      fetcher: stubNotion([{ id: 'p1', title: 'メモ', edited: '2026-07-15T00:00:00.000Z', body: '単価は8万円。' }]) as never,
+    });
+    await disconnect(d, a.workspaceId, a.userId, connId);
+    assert.equal((await searchWithEvidence(d, a.workspaceId, a.userId, { query: '単価' })).results.length, 0);
+    assert.equal((await syncStatus(d, a.workspaceId)).connection, null);
+  });
+
+  test('認可切れ（401）で接続を revoked にする', async () => {
+    const { d, a } = await setup();
+    const { pack, connId } = await connected(d, a);
+    const dead = async () => new Response('unauthorized', { status: 401 });
+    const r = await syncNotion(d, a.workspaceId, a.userId, { connectionId: connId, packId: pack.id, fetcher: dead as never });
+    assert.equal(r.status, 'failed');
+    const { rows } = await d.query<{ status: string }>('select status from connections where id = $1', [connId]);
+    assert.equal(rows[0]!.status, 'revoked');
+    assert.equal((await syncStatus(d, a.workspaceId)).connection, null, '失効した接続が有効として見えている');
   });
 });
