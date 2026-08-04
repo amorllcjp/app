@@ -32,10 +32,42 @@ npm run typecheck
 
 ## 3. Neon の準備
 
-1. Neon でプロジェクトを作る（Vercel の Marketplace 統合を使うと環境変数が自動で入る）
-2. **pooled 接続文字列**（ホスト名に `-pooler` が入っているもの）を控える
+### プロジェクト作成時の設定
+
+| 項目 | 設定 | 理由 |
+|---|---|---|
+| Project name | `context-bridge` | 任意 |
+| Postgres version | **18** | テストは Postgres 18（PGlite）で通している。合わせる |
+| Region | **AWS Asia Pacific 1 (Tokyo)** | 下記 |
+| Enable Neon Auth | **OFF** | 自前の認証を実装済み。使わないテーブルが増えるだけ |
+
+### リージョンは Vercel と必ず揃える
+
+判断基準はユーザーの所在地ではなく、**Vercel の関数と Neon の距離**。
+このアプリは1リクエストで複数回DBに問い合わせるため、往復遅延が回数分だけ掛け算になる。
+
+**Neon を東京にするなら、Vercel の関数リージョンも東京にすること。**
+Vercel の既定は米国東部（`iad1`）で、ここを放置して Neon だけ東京にすると
+両方を米国東部にするより遅くなる。一番やりがちな失敗。
+
+```
+Vercel → プロジェクト → Settings → Functions → Function Region → Tokyo (hnd1)
+```
+
+### Free プランの注意
+
+「Scales to zero when inactive」により、しばらく使わないと最初のリクエストが遅くなる。
+Vercel のコールドスタートと重なると初回は数秒かかることがある。
+**デザインパートナーに見せる直前は一度アクセスして温めておくこと。**
+
+ストレージ 0.5GB は、Markdown のテキストだけなら当面足りる。
+
+### 接続文字列とマイグレーション
+
+1. **pooled 接続文字列**（ホスト名に `-pooler` が入っているもの）を控える
+   - Connection Details で pooled / direct を切り替えられる
    - サーバーレスは同時実行が増えるとDB接続を食い潰す。直結の接続文字列を使わないこと
-3. マイグレーションを一度だけ実行する
+2. マイグレーションを一度だけ実行する
 
 ```bash
 DATABASE_URL='postgresql://...-pooler.../db?sslmode=require' npm run migrate
