@@ -22,7 +22,7 @@ DBは本番が **Neon（PostgreSQL）**、ローカルとテストが **PGlite**
 | 取り込み | Markdown / テキストの貼り付け |
 | 検索 | 日本語のbigram索引（tsvector + GIN）。2文字語（単価・面談）も取りこぼさない。拡張不要 |
 | 出典 | 全結果に Pack名・タイトル・出典URL・由来・取得時刻が付く。出典の無い結果は返さない |
-| AI接続 | リモートMCP（Claude / Claude Code / Cursor）。2025系と2026-07-28系の両方 |
+| AI接続 | リモートMCP（Streamable HTTP）。2025系と2026-07-28系の両方。実機での確認状況は[互換性マトリクス](docs/互換性マトリクス.md) |
 | 逃げ道 | Markdownエクスポート。MCP非対応のAIにも貼り付けて使える |
 | 課金 | Stripe。Free（Pack 1・検索100回/月）/ Pro 月額2,980円（Pack 20・検索5,000回/月） |
 
@@ -89,6 +89,7 @@ CIで毎回実行する。ここが壊れたらリリースしない。
 | | |
 |---|---|
 | [使い方と動作確認](docs/使い方.md) | **操作手順と、壊れていないことの確かめ方** |
+| [互換性マトリクス](docs/互換性マトリクス.md) | どのAIクライアントで、どこまで確認できたか |
 | [要件定義書 v2](docs/requirements/unabyss-japan-requirements-v2.md) | 元の要件。事実と仮説を分けた基準 |
 | [実装計画 v1](docs/plan/implementation-plan-v1.md) | Gate 0〜4 の計画 |
 | [ADR-0001 削除した要件](docs/adr/ADR-0001-削除した要件.md) | **何を削り、いつ戻すか** |
