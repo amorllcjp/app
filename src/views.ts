@@ -218,6 +218,43 @@ export interface DashboardData {
  * ここが「入力の物語」を担う部分。手で貼らせるのをやめ、すでに Notion に
  * 書いてあるものが入るようにする（ADR-0003）。
  */
+/**
+ * はじめかた。
+ *
+ * このアプリの入力は「連携」ではなく「AIとの会話」が本線。
+ * 利用者が資料をどこにも書いていなくても、AIに喋った内容はそのまま保存できる。
+ * 画面がそれを言っていないと、Packが空のまま使われずに終わる。
+ */
+function renderHowTo(d: DashboardData): string {
+  const pack = d.packs[0];
+  const hasPack = Boolean(pack);
+  const hasToken = Boolean(d.tokenPrefix);
+  const packName = pack?.name ?? 'A社リニューアル案件';
+  const mark = (done: boolean) => (done ? '<span style="color:var(--ok, #2a7)">✓</span>' : '<span class="muted">○</span>');
+
+  return `<div class="card">
+    <p style="margin-top:0"><strong>使いはじめる手順は3つです。</strong>
+      <span class="small muted">Notion などの連携は要りません。</span></p>
+    <ol style="padding-left:22px;line-height:1.9">
+      <li>${mark(hasPack)} <strong>Pack を作る</strong>
+        ${hasPack ? `<span class="small muted">（作成済み: ${esc(packName)}）</span>` : '<span class="small muted">— 案件ごとに1つ。下のフォームから</span>'}</li>
+      <li>${mark(hasToken)} <strong>AI をつなぐ</strong>
+        ${hasToken ? '<span class="small muted">（トークン発行済み）</span>' : '<span class="small muted">— 下の「AIをつなぐ」でトークンを発行</span>'}</li>
+      <li>${mark(false)} <strong>会話の中で出し入れする</strong> <span class="small muted">— 下の言い方をそのまま使えます</span></li>
+    </ol>
+
+    <p style="margin-bottom:6px"><strong>入れるとき</strong>（打ち合わせや相談のあと、AIにこう言う）</p>
+    <pre>いまの決定事項を「${esc(packName)}」に保存して</pre>
+    <p class="small muted" style="margin-top:-6px">AIは保存前に必ず内容を提示して確認を取ります。勝手には保存されません。</p>
+
+    <p style="margin-bottom:6px"><strong>出すとき</strong>（別の日、別のスレッドでも）</p>
+    <pre>「${esc(packName)}」を調べて、単価はいくらで合意した？出典もつけて</pre>
+    <p class="small muted" style="margin-bottom:0">
+      根拠が見つからないときは、AIは推測せず「見つからない」と答えます。
+      資料を手で貼りたい場合は Pack の画面から追加できます。</p>
+  </div>`;
+}
+
 function renderNotion(d: DashboardData): string {
   const n = d.notion;
   if (!n) return '';
@@ -307,6 +344,9 @@ ${
     : ''
 }
 
+<h2>はじめかた</h2>
+${renderHowTo(d)}
+
 <h2>Context Pack</h2>
 ${
   d.packs.length === 0
@@ -338,8 +378,16 @@ ${
   </form>`
 }
 
-<h2>資料を自動で入れる</h2>
-${renderNotion(d)}
+${
+  // すでに繋がっている場合だけ開いた状態で出す。使っていない人には畳んでおく。
+  d.notion?.connection?.status === 'active'
+    ? `<h2>Notion からの取り込み</h2>${renderNotion(d)}`
+    : `<details style="margin-top:28px">
+         <summary style="cursor:pointer"><strong>Notion から自動で取り込む</strong>
+           <span class="small muted">（任意・Notion に案件情報を書いている人向け）</span></summary>
+         <div style="margin-top:12px">${renderNotion(d)}</div>
+       </details>`
+}
 
 <h2>AIをつなぐ</h2>
 <div class="card">
